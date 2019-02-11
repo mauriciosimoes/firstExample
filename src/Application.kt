@@ -19,18 +19,15 @@ import io.ktor.routing.routing
 import java.text.DateFormat
 import java.util.*
 
+
+// TODO introduzir modularização
+// TODO introduzir teste unitario
+// TODO introduzir autenticacao do google
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
-data class Snippet(val text: String)
 
-val snippets = Collections.synchronizedList(mutableListOf(
-    Snippet("hello"),
-    Snippet("world")
-))
+// Autenticação
 
-data class PostSnippet(val snippet: PostSnippet.Text) {
-    data class Text(val text: String)
-}
 
 open class SimpleJWT(val secret: String) {
     private val algorithm = Algorithm.HMAC256(secret)
@@ -47,6 +44,46 @@ val users = Collections.synchronizedMap(
         .associateBy { it.name }
         .toMutableMap()
 )
+
+
+// Objetos de negocio
+
+
+data class Snippet(val text: String)
+
+val snippets = Collections.synchronizedList(mutableListOf(
+    Snippet("hello"),
+    Snippet("world")
+))
+
+data class PostSnippet(val snippet: PostSnippet.Text) {
+    data class Text(val text: String)
+}
+
+data class Conta(val text: String, val isPadrao: Boolean)
+
+val contas = Collections.synchronizedList(mutableListOf(
+    Conta("nubank", true)
+    , Conta("din", false)
+    , Conta("bb", false)
+    , Conta("ourocard", false)
+))
+
+//data class PostSnippet(val snippet: PostSnippet.Text) {
+//    data class Text(val text: String)
+//}
+data class OQueFoiComprado(val oQueFoiComprado: String)
+data class QuantoFoi(val quantoFoi: Double)
+data class QuantasVezes(val quantasVezes: Long?) // automaticamente será 1
+data class Tag(val tag: String?) // será null
+data class ValorDaParcela(val valorDaParcela: Double?) // sera QuantoFoi / QuantasVezes
+data class SaiuDeonde(val saiuDeonde: String?) // sera o ultimo utilizado ou marcada como padrao
+data class DataDaCompra(val dataDaCompra: Date?) // sera dia corrente
+data class UrlNfe(val urlNfe: String?) // sera vazio mesmo
+
+
+// Modulo principal
+
 
 @Suppress("unused") // Referenced in application.conf
 @kotlin.jvm.JvmOverloads
@@ -73,6 +110,13 @@ fun Application.module(testing: Boolean = false) {
     }
 
     routing {
+        post("/login-register") {
+            val post = call.receive<LoginRegister>() // TODO acrescentar tratamento caso o cliente não envie LoginRegister
+            val user = users.getOrPut(post.user) { User(post.user, post.password) }
+            if (user.password != post.password) error("Invalid credentials")
+            call.respond(mapOf("token" to simpleJwt.sign(user.name)))
+        }
+
         route("/snippets") {
             get {
                 //            call.respondText("OK")
@@ -89,13 +133,20 @@ fun Application.module(testing: Boolean = false) {
             }
         }
 
-        post("/login-register") {
-            val post = call.receive<LoginRegister>() // TODO acrescentar tratamento caso o cliente não envie LoginRegister
-            val user = users.getOrPut(post.user) { User(post.user, post.password) }
-            if (user.password != post.password) error("Invalid credentials")
-            call.respond(mapOf("token" to simpleJwt.sign(user.name)))
+        route("/contas") {
+            get {
+                call.respond(mapOf(
+                    "contas" to synchronized(contas) { contas.toList() }
+                ))
+            }
+            authenticate {
+                post {
+                    val post = call.receive<PostSnippet>()
+                    snippets += Snippet(post.snippet.text)
+                    call.respond(mapOf("OK" to true))
+                }
+            }
         }
     }
-
 }
 
