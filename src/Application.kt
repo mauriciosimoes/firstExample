@@ -8,6 +8,7 @@ import io.ktor.auth.Authentication
 import io.ktor.auth.UserIdPrincipal
 import io.ktor.auth.authenticate
 import io.ktor.auth.jwt.jwt
+import io.ktor.auth.principal
 import io.ktor.features.ContentNegotiation
 import io.ktor.jackson.jackson
 import io.ktor.response.*
@@ -78,9 +79,10 @@ data class RegistroDeCompra(
     , val quantasVezes: Long? // automaticamente será 1
     , val tag: String? // será null
     , val valorDaParcela: Double? // sera QuantoFoi / QuantasVezes
-    , val saiuDeonde: String? // sera o ultimo utilizado ou marcada como padrao
+    , val contaText: String? // sera o ultimo utilizado ou marcada como padrao
     , val dataDaCompra: Date? // sera dia corrente
     , val urlNfe: String? // sera vazio mesmo
+    , val usuario: String
 )
 
 val registrosDeCompra = Collections.synchronizedList(mutableListOf(
@@ -91,10 +93,30 @@ val registrosDeCompra = Collections.synchronizedList(mutableListOf(
         , null
         , null
         , null
-        , null)
+        , null
+        , "anomino")
 ))
 
-data class PostRegistroDeCompra(val registroDeCompra: RegistroDeCompra)
+data class PostRegistrosDeCompra( val registroDeCompraDoPost: RegistroDeCompraDoPost) {
+    data class RegistroDeCompraDoPost (
+        val oQueFoiComprado: String
+        , val quantoFoi: Double
+        , val quantasVezes: Long? // automaticamente será 1
+        , val tag: String? // será null
+        , val valorDaParcela: Double? // sera QuantoFoi / QuantasVezes
+        , val contaText: String? // sera o ultimo utilizado ou marcada como padrao
+        , val dataDaCompra: Date? // sera dia corrente
+        , val urlNfe: String? // sera vazio mesmo
+    )
+//    data class OQueFoiComprado (val oQueFoiComprado: String)
+//    data class QuantoFoi ( val quantoFoi: Double)
+//    data class QuantasVezes ( val quantasVezes: Long?) // automaticamente será 1
+//    data class Tag ( val tag: String?) // será null
+//    data class ValorDaParcela ( val valorDaParcela: Double?) // sera QuantoFoi / QuantasVezes
+//    data class ContaText ( val contaText: String?) // sera o ultimo utilizado ou marcada como padrao
+//    data class DataDaCompra ( val dataDaCompra: Date?) // sera dia corrente
+//    data class UrlNfe ( val urlNfe: String?) // sera vazio mesmo
+}
 
 
 // Modulo principal
@@ -165,15 +187,18 @@ fun Application.module(testing: Boolean = false) {
 
             authenticate {
                 post {
-                    val post = call.receive<PostRegistroDeCompra>()
-                    registrosDeCompra += RegistroDeCompra(post.registroDeCompra.oQueFoiComprado
-                        , post.registroDeCompra.quantoFoi
-                        , post.registroDeCompra.quantasVezes
-                        , post.registroDeCompra.tag
-                        , post.registroDeCompra.valorDaParcela
-                        , post.registroDeCompra.saiuDeonde
-                        , post.registroDeCompra.dataDaCompra
-                        , post.registroDeCompra.urlNfe)
+                    val userIdPrincipal = call.principal<UserIdPrincipal>() ?: error("No principal")
+
+                    val post = call.receive<PostRegistrosDeCompra>()
+                    registrosDeCompra += RegistroDeCompra(post.registroDeCompraDoPost.oQueFoiComprado
+                        , post.registroDeCompraDoPost.quantoFoi
+                        , post.registroDeCompraDoPost.quantasVezes
+                        , post.registroDeCompraDoPost.tag
+                        , post.registroDeCompraDoPost.valorDaParcela
+                        , post.registroDeCompraDoPost.contaText
+                        , post.registroDeCompraDoPost.dataDaCompra
+                        , post.registroDeCompraDoPost.urlNfe
+                        , userIdPrincipal.name)
                     call.respond(mapOf("OK" to true))
                 }
             }
