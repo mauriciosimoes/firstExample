@@ -21,8 +21,11 @@ import java.util.*
 
 
 // TODO introduzir modularização
+// TODO retirar snippets
 // TODO introduzir teste unitario
 // TODO introduzir autenticacao do google
+// TODO substituir objetospor banco de dados: contas, registrosDeCompra
+
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
 
@@ -69,17 +72,29 @@ val contas = Collections.synchronizedList(mutableListOf(
     , Conta("ourocard", false)
 ))
 
-//data class PostSnippet(val snippet: PostSnippet.Text) {
-//    data class Text(val text: String)
-//}
-data class OQueFoiComprado(val oQueFoiComprado: String)
-data class QuantoFoi(val quantoFoi: Double)
-data class QuantasVezes(val quantasVezes: Long?) // automaticamente será 1
-data class Tag(val tag: String?) // será null
-data class ValorDaParcela(val valorDaParcela: Double?) // sera QuantoFoi / QuantasVezes
-data class SaiuDeonde(val saiuDeonde: String?) // sera o ultimo utilizado ou marcada como padrao
-data class DataDaCompra(val dataDaCompra: Date?) // sera dia corrente
-data class UrlNfe(val urlNfe: String?) // sera vazio mesmo
+data class RegistroDeCompra(
+    val oQueFoiComprado: String
+    , val quantoFoi: Double
+    , val quantasVezes: Long? // automaticamente será 1
+    , val tag: String? // será null
+    , val valorDaParcela: Double? // sera QuantoFoi / QuantasVezes
+    , val saiuDeonde: String? // sera o ultimo utilizado ou marcada como padrao
+    , val dataDaCompra: Date? // sera dia corrente
+    , val urlNfe: String? // sera vazio mesmo
+)
+
+val registrosDeCompra = Collections.synchronizedList(mutableListOf(
+    RegistroDeCompra("nada"
+        , 0.0
+        , null
+        , null
+        , null
+        , null
+        , null
+        , null)
+))
+
+data class PostRegistroDeCompra(val registroDeCompra: RegistroDeCompra)
 
 
 // Modulo principal
@@ -139,10 +154,26 @@ fun Application.module(testing: Boolean = false) {
                     "contas" to synchronized(contas) { contas.toList() }
                 ))
             }
+        }
+
+        route("/registrosDeCompra") {
+            get {
+                call.respond(mapOf(
+                    "registrosDeCompra" to synchronized(registrosDeCompra) { registrosDeCompra.toList() }
+                ))
+            }
+
             authenticate {
                 post {
-                    val post = call.receive<PostSnippet>()
-                    snippets += Snippet(post.snippet.text)
+                    val post = call.receive<PostRegistroDeCompra>()
+                    registrosDeCompra += RegistroDeCompra(post.registroDeCompra.oQueFoiComprado
+                        , post.registroDeCompra.quantoFoi
+                        , post.registroDeCompra.quantasVezes
+                        , post.registroDeCompra.tag
+                        , post.registroDeCompra.valorDaParcela
+                        , post.registroDeCompra.saiuDeonde
+                        , post.registroDeCompra.dataDaCompra
+                        , post.registroDeCompra.urlNfe)
                     call.respond(mapOf("OK" to true))
                 }
             }
