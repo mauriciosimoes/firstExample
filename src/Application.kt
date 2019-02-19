@@ -2,76 +2,87 @@ package com.example
 
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
+import com.example.dao.DAOFacade
+import com.example.dao.DAOFacadeCache
+import com.example.dao.DAOFacadeDatabase
+import com.example.loginRegister.routeLoginRegister
+import com.example.model.Conta
+import com.example.model.PostConta
+import com.example.snippets.routeSnippets
+import com.fasterxml.jackson.core.JsonParseException
 import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.databind.exc.MismatchedInputException
+import com.fasterxml.jackson.module.kotlin.MissingKotlinParameterException
+import com.mchange.v2.c3p0.ComboPooledDataSource
 import io.ktor.application.*
 import io.ktor.auth.Authentication
 import io.ktor.auth.UserIdPrincipal
 import io.ktor.auth.authenticate
 import io.ktor.auth.jwt.jwt
 import io.ktor.auth.principal
-import io.ktor.features.ContentNegotiation
+import io.ktor.features.*
+import io.ktor.http.HttpStatusCode
 import io.ktor.jackson.jackson
+import io.ktor.locations.KtorExperimentalLocationsAPI
+import io.ktor.locations.Location
+import io.ktor.locations.Locations
 import io.ktor.response.*
 import io.ktor.request.*
 import io.ktor.routing.get
 import io.ktor.routing.post
 import io.ktor.routing.route
 import io.ktor.routing.routing
+import io.ktor.util.KtorExperimentalAPI
+import org.jetbrains.exposed.sql.Database
+import java.io.File
+import java.io.IOException
+import java.sql.Driver
 import java.text.DateFormat
 import java.util.*
 
 
 // TODO introduzir modularização
-// TODO retirar snippets
 // TODO introduzir teste unitario
+// TODO tratamento de Erro
 // TODO introduzir autenticacao do google
 // TODO substituir objetospor banco de dados: contas, registrosDeCompra
 
+
+@KtorExperimentalLocationsAPI
+@Location ("/login-register") class UrlLoginRegister
+@KtorExperimentalLocationsAPI
+@Location("/snippets") class UrlSnippets
+@KtorExperimentalLocationsAPI
+@Location("/snippets/{id}") class UrlSnippets_id(val id: Int)
+
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
-
-// Autenticação
-
-
+/**
+ * Trecho relacionado a [NegocioLoginRegister]
+ */
 open class SimpleJWT(val secret: String) {
     private val algorithm = Algorithm.HMAC256(secret)
     val verifier = JWT.require(algorithm).build()
     fun sign(name: String): String = JWT.create().withClaim("name", name).sign(algorithm)
 }
 
-class LoginRegister(val user: String, val password: String)
 
-class User(val name: String, val password: String)
-
-val users = Collections.synchronizedMap(
-    listOf(User("test", "test"))
-        .associateBy { it.name }
-        .toMutableMap()
-)
+/**
+ * Trecho relacionado a [Exceptions]
+ */
+class InvalidCredentialsException(message: String) : RuntimeException(message)
+class NegocioException(message: String) : RuntimeException(message)
 
 
 // Objetos de negocio
 
 
-data class Snippet(val text: String)
-
-val snippets = Collections.synchronizedList(mutableListOf(
-    Snippet("hello"),
-    Snippet("world")
-))
-
-data class PostSnippet(val snippet: PostSnippet.Text) {
-    data class Text(val text: String)
-}
-
-data class Conta(val text: String, val isPadrao: Boolean)
-
-val contas = Collections.synchronizedList(mutableListOf(
-    Conta("nubank", true)
-    , Conta("din", false)
-    , Conta("bb", false)
-    , Conta("ourocard", false)
-))
+//val contas = Collections.synchronizedList(mutableListOf(
+//    Conta(1,"nubank", true)
+//    , Conta(2, "din", false)
+//    , Conta(3, "bb", false)
+//    , Conta(4, "ourocard", false)
+//))
 
 data class RegistroDeCompra(
     val oQueFoiComprado: String
@@ -108,23 +119,85 @@ data class PostRegistrosDeCompra( val registroDeCompraDoPost: RegistroDeCompraDo
         , val dataDaCompra: Date? // sera dia corrente
         , val urlNfe: String? // sera vazio mesmo
     )
-//    data class OQueFoiComprado (val oQueFoiComprado: String)
-//    data class QuantoFoi ( val quantoFoi: Double)
-//    data class QuantasVezes ( val quantasVezes: Long?) // automaticamente será 1
-//    data class Tag ( val tag: String?) // será null
-//    data class ValorDaParcela ( val valorDaParcela: Double?) // sera QuantoFoi / QuantasVezes
-//    data class ContaText ( val contaText: String?) // sera o ultimo utilizado ou marcada como padrao
-//    data class DataDaCompra ( val dataDaCompra: Date?) // sera dia corrente
-//    data class UrlNfe ( val urlNfe: String?) // sera vazio mesmo
 }
 
 
 // Modulo principal
 
 
+@KtorExperimentalAPI
 @Suppress("unused") // Referenced in application.conf
-@kotlin.jvm.JvmOverloads
 fun Application.module(testing: Boolean = false) {
+    // Obtains the youkube config key from the application.conf file.
+    // Inside that key, we then read several configuration properties
+    // with the [session.cookie], the [key] or the [upload.dir]
+    val registroDeComprasConfig = environment.config.config("registroDeCompras")
+//    val sessionCookieConfig = youkubeConfig.config("session.cookie")
+//    val key: String = sessionCookieConfig.property("key").getString()
+//    val sessionkey = hex(key)
+
+    // We create the folder and a [Database] in that folder for the configuration [upload.dir].
+    val uploadDirPath: String = registroDeComprasConfig.property("upload.dir").getString()
+    val uploadDir = File(uploadDirPath)
+    if (!uploadDir.mkdirs() && !uploadDir.exists()) {
+        throw IOException("Failed to create directory ${uploadDir.absolutePath}")
+    }
+
+    val cacheDirPath: String = registroDeComprasConfig.property("cache.dir").getString()
+    val cacheDir = File(cacheDirPath)
+    if (!cacheDir.mkdirs() && !cacheDir.exists()) {
+        throw IOException("Failed to create directory ${cacheDir.absolutePath}")
+    }
+
+    //val database = Database(uploadDir)
+
+    /**
+     * Pool of JDBC connections used.
+     */
+    val pool = ComboPooledDataSource().apply {
+        driverClass = Driver::class.java.name
+        jdbcUrl = "jdbc:h2:file:${uploadDir.canonicalFile.absolutePath}"
+        user = ""
+        password = ""
+    }
+
+    /**
+     * Constructs a facade with the database, connected to the DataSource configured earlier with the [dir]
+     * for storing the database.
+     */
+    log.debug("teste mauricio ${cacheDir.parentFile}")
+    val dao: DAOFacade = DAOFacadeCache(
+            DAOFacadeDatabase(Database.connect(pool))
+            , File(cacheDir.parentFile, "ehcache"))
+
+    // First we initialize the database.
+    dao.init()
+
+    // And we subscribe to the stop event of the application, so we can also close the [ComboPooledDataSource] [pool].
+    environment.monitor.subscribe(ApplicationStopped) { pool.close() }
+
+    // Now we call to a main with the dependencies as arguments.
+    // Separating this function with its dependencies allows us to provide several modules with
+    // the same code and different datasources living in the same application,
+    // and to provide mocked instances for doing integration tests.
+    mainWithDependencies(dao)
+}
+
+
+@KtorExperimentalAPI
+@KtorExperimentalLocationsAPI
+fun Application.mainWithDependencies(dao: DAOFacade) {
+    // This adds automatically Date and Server headers to each response, and would allow you to configure
+    // additional headers served to each response.
+    install(DefaultHeaders)
+
+    // This uses use the logger to log every call (request/response)
+    install(CallLogging)
+
+    // Allows to use classes annotated with @Location to represent URLs.
+    // They are typed, can be constructed to generate URLs, and can be used to register routes.
+    install(Locations)
+
     install(ContentNegotiation) {
         jackson {
             enable(SerializationFeature.INDENT_OUTPUT)
@@ -146,37 +219,53 @@ fun Application.module(testing: Boolean = false) {
         }
     }
 
+    install(StatusPages) {
+        exception<InvalidCredentialsException> { exception ->
+            call.respond(HttpStatusCode.Unauthorized, mapOf("OK" to false, "error" to (exception.message ?: "")))
+        }
+        exception<NegocioException> { exception ->
+            call.respond(HttpStatusCode.BadRequest, mapOf("OK" to false, "error" to (exception.message ?: "")))
+        }
+    }
+
     routing {
-        post("/login-register") {
-            val post = call.receive<LoginRegister>() // TODO acrescentar tratamento caso o cliente não envie LoginRegister
-            val user = users.getOrPut(post.user) { User(post.user, post.password) }
-            if (user.password != post.password) error("Invalid credentials")
-            call.respond(mapOf("token" to simpleJwt.sign(user.name)))
-        }
+        routeLoginRegister(simpleJwt)
+        routeSnippets()
 
-        route("/snippets") {
-            get {
-                //            call.respondText("OK")
+       route("/contas") {
+           get {
+               call.respond(mapOf(
+                   "contas" to dao.conta()
+               ))
+           }
+            get("{id}") {
+                val idString = call.parameters["id"] ?: throw BadRequestException("Parametro ID não definido")
+                val id: Int = idString.toIntOrNull() ?:  throw NegocioException("Parametro ID de CONTA não definido")
+
                 call.respond(mapOf(
-                    "snippets" to synchronized(snippets) { snippets.toList() }
+                    "conta" to dao.conta(id)
                 ))
             }
-            authenticate {
-                post {
-                    val post = call.receive<PostSnippet>()
-                    snippets += Snippet(post.snippet.text)
-                    call.respond(mapOf("OK" to true))
-                }
-            }
-        }
+           authenticate {
+               post {
+                   val userIdPrincipal = call.principal<UserIdPrincipal>() ?:
+                        error("Informação de autenticação não encontrado")
 
-        route("/contas") {
-            get {
-                call.respond(mapOf(
-                    "contas" to synchronized(contas) { contas.toList() }
-                ))
-            }
-        }
+                   val post = try { call.receive<PostConta>() }
+                        catch (e: JsonParseException) { throw NegocioException( e.toString() ) }
+                        catch (e: MismatchedInputException) { throw NegocioException( e.toString() ) }
+                        catch (e: MissingKotlinParameterException) { throw NegocioException( e.msg ) }
+                   val contasMutableList = arrayListOf<Conta>()
+
+                   post.contasDoPost.forEach {
+                       val id: Int = dao.createConta(it.text, it.isDefaut)
+                       contasMutableList.add( Conta(id, it.text, it.isDefaut) )
+                   }
+
+                   call.respond(mapOf("OK" to true, "contas" to contasMutableList))
+               }
+           }
+       }
 
         route("/registrosDeCompra") {
             get {
@@ -205,4 +294,3 @@ fun Application.module(testing: Boolean = false) {
         }
     }
 }
-
