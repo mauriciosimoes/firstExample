@@ -2,17 +2,13 @@ package com.example
 
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
+import com.example.contas.routeContas
 import com.example.dao.DAOFacade
 import com.example.dao.DAOFacadeCache
 import com.example.dao.DAOFacadeDatabase
 import com.example.loginRegister.routeLoginRegister
-import com.example.model.Conta
-import com.example.model.PostConta
 import com.example.snippets.routeSnippets
-import com.fasterxml.jackson.core.JsonParseException
 import com.fasterxml.jackson.databind.SerializationFeature
-import com.fasterxml.jackson.databind.exc.MismatchedInputException
-import com.fasterxml.jackson.module.kotlin.MissingKotlinParameterException
 import com.mchange.v2.c3p0.ComboPooledDataSource
 import io.ktor.application.*
 import io.ktor.auth.Authentication
@@ -54,6 +50,10 @@ import java.util.*
 @Location("/snippets") class UrlSnippets
 @KtorExperimentalLocationsAPI
 @Location("/snippets/{id}") class UrlSnippets_id(val id: Int)
+@KtorExperimentalLocationsAPI
+@Location("/contas") class UrlContas
+@KtorExperimentalLocationsAPI
+@Location("/contas/{id}") class UrlContas_id(val id: Int)
 
 fun main(args: Array<String>): Unit = io.ktor.server.netty.EngineMain.main(args)
 
@@ -68,22 +68,13 @@ open class SimpleJWT(val secret: String) {
 
 
 /**
- * Trecho relacionado a [Exceptions]
+ * Trecho relacionado a [Exception]s
  */
 class InvalidCredentialsException(message: String) : RuntimeException(message)
 class NegocioException(message: String) : RuntimeException(message)
 
 
 // Objetos de negocio
-
-
-//val contas = Collections.synchronizedList(mutableListOf(
-//    Conta(1,"nubank", true)
-//    , Conta(2, "din", false)
-//    , Conta(3, "bb", false)
-//    , Conta(4, "ourocard", false)
-//))
-
 data class RegistroDeCompra(
     val oQueFoiComprado: String
     , val quantoFoi: Double
@@ -124,9 +115,13 @@ data class PostRegistrosDeCompra( val registroDeCompraDoPost: RegistroDeCompraDo
 
 // Modulo principal
 
-
+/**
+ * Trecho relacionado a [Module Principal]
+ * Referenced in application.conf
+ */
+@KtorExperimentalLocationsAPI
 @KtorExperimentalAPI
-@Suppress("unused") // Referenced in application.conf
+@Suppress("unused")
 fun Application.module(testing: Boolean = false) {
     // Obtains the youkube config key from the application.conf file.
     // Inside that key, we then read several configuration properties
@@ -149,8 +144,6 @@ fun Application.module(testing: Boolean = false) {
         throw IOException("Failed to create directory ${cacheDir.absolutePath}")
     }
 
-    //val database = Database(uploadDir)
-
     /**
      * Pool of JDBC connections used.
      */
@@ -169,8 +162,6 @@ fun Application.module(testing: Boolean = false) {
     val dao: DAOFacade = DAOFacadeCache(
             DAOFacadeDatabase(Database.connect(pool))
             , File(cacheDir.parentFile, "ehcache"))
-
-    // First we initialize the database.
     dao.init()
 
     // And we subscribe to the stop event of the application, so we can also close the [ComboPooledDataSource] [pool].
@@ -231,41 +222,9 @@ fun Application.mainWithDependencies(dao: DAOFacade) {
     routing {
         routeLoginRegister(simpleJwt)
         routeSnippets()
+        routeContas( dao )
 
-       route("/contas") {
-           get {
-               call.respond(mapOf(
-                   "contas" to dao.conta()
-               ))
-           }
-            get("{id}") {
-                val idString = call.parameters["id"] ?: throw BadRequestException("Parametro ID não definido")
-                val id: Int = idString.toIntOrNull() ?:  throw NegocioException("Parametro ID de CONTA não definido")
 
-                call.respond(mapOf(
-                    "conta" to dao.conta(id)
-                ))
-            }
-           authenticate {
-               post {
-                   val userIdPrincipal = call.principal<UserIdPrincipal>() ?:
-                        error("Informação de autenticação não encontrado")
-
-                   val post = try { call.receive<PostConta>() }
-                        catch (e: JsonParseException) { throw NegocioException( e.toString() ) }
-                        catch (e: MismatchedInputException) { throw NegocioException( e.toString() ) }
-                        catch (e: MissingKotlinParameterException) { throw NegocioException( e.msg ) }
-                   val contasMutableList = arrayListOf<Conta>()
-
-                   post.contasDoPost.forEach {
-                       val id: Int = dao.createConta(it.text, it.isDefaut)
-                       contasMutableList.add( Conta(id, it.text, it.isDefaut) )
-                   }
-
-                   call.respond(mapOf("OK" to true, "contas" to contasMutableList))
-               }
-           }
-       }
 
         route("/registrosDeCompra") {
             get {
